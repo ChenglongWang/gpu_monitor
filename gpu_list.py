@@ -22,10 +22,10 @@ def ssh_host(hosts, mode='memory', num_gpus=4, verbose=False):
     info, info2, info3 = [], [], []
     for host in hosts:
         if mode != 'all':
-            COMMAND="python3 /homes/cwang/Code/gpu_monitor/py_gpu_status.py --mode "+mode
+            COMMAND=f"python3 {PWD}/py_gpu_status.py --mode {mode}"
         else:
-            COMMAND = '''
-            python3 /homes/cwang/Code/gpu_monitor/py_gpu_status.py --mode all
+            COMMAND = f'''
+            python3 {PWD}/py_gpu_status.py --mode all
             free -th
             '''
 
