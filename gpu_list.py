@@ -75,7 +75,7 @@ def get_gpu_health(mem, use, th=[1,15]):
     elif mem>1 and use>th[1]:
         return 'Healthy'
     else:
-        print(f'Confused: mem-{mem},use-{use}')
+        #print(f'Confused: mem-{mem},use-{use}')
         return 'Error?'
 
 def get_tablerow(host_name,status):
@@ -188,11 +188,15 @@ class GPU_logger():
                     nonzero_idx = np.where(memory_>1)[0]
                     m_memory_ = np.mean(memory_[nonzero_idx[0]:]) if len(nonzero_idx) > 0 else np.mean(memory_)
                     m_usage_ = np.mean(usage_[nonzero_idx]) if len(nonzero_idx) > 0 else np.mean(usage_)
-                    if m_memory_ ==-1: # I've set empty gpu to -1
+                    if m_memory_ == -1: # I've set empty gpu to -1
                         gpu_status_row.append(' ')
                         continue
 
-                    status = get_gpu_health(m_memory_, m_usage_)
+                    if np.any(memory_[-5:]>1): #if last 5 checkpoint is empty -> not used now
+                        status = get_gpu_health(m_memory_, m_usage_)
+                    else:
+                        status = status_kw[0]
+
                     box_prop = dict(facecolor=color_map[status], edgecolor='none', pad=2, alpha=0.6)
                     gpu_status_row.append(status)
 
@@ -207,7 +211,7 @@ class GPU_logger():
                     plt.tight_layout()
                     plt.legend()
 
-                gpu_status_table.append(get_tablerow(host.replace('emon','-'),gpu_status_row))
+                gpu_status_table.append(get_tablerow(host.replace('emon','-'),gpu_status_row)) #shorten hostname
                 cpu_status_table.append(get_tablerow(host.replace('emon','-'),
                                         [str(cpu_memory[k][0])+'G',str(cpu_memory[k][1])+'G',str(cpu_memory[k][-1])+'G']))
                 if self.show_monitor:
