@@ -1,0 +1,11 @@
+# Core dependencies for GPU Monitor
+numpy>=1.19.0
+matplotlib>=3.3.0
+visdom>=0.1.8
+
+# Optional dependencies
+# These are required if you want to run the full monitoring system
+# Install with: pip install -r requirements.txt
+
+# Note: nvidia-ml-py3 can be added if you want to use Python bindings
+# instead of calling nvidia-smi subprocess

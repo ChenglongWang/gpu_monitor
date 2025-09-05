@@ -18,14 +18,38 @@ import HTML
 def filter_num(line):
     return re.findall(r"[-+]?\d*\.\d+|\d+", line)
 
-def ssh_host(hosts, mode='memory', num_gpus=4, verbose=False):
+def ssh_host(hosts, mode='memory', num_gpus=4, verbose=False, script_path=None):
+    """
+    SSH to hosts and get GPU information
+    
+    Parameters
+    ----------
+    hosts : list
+        List of hostnames to connect to
+    mode : str
+        Mode for GPU information ('memory', 'gpu', 'all')
+    num_gpus : int
+        Expected number of GPUs per host
+    verbose : bool
+        Whether to print verbose output
+    script_path : str
+        Path to the py_gpu_status.py script
+    
+    Returns
+    -------
+    tuple or list
+        GPU information depending on mode
+    """
+    if script_path is None:
+        script_path = os.path.dirname(os.path.abspath(__file__))
+    
     info, info2, info3 = [], [], []
     for host in hosts:
         if mode != 'all':
-            COMMAND=f"python3 {PWD}/py_gpu_status.py --mode {mode}"
+            COMMAND=f"python3 {script_path}/py_gpu_status.py --mode {mode}"
         else:
             COMMAND = f'''
-            python3 {PWD}/py_gpu_status.py --mode all
+            python3 {script_path}/py_gpu_status.py --mode all
             free -th
             '''
 
@@ -35,10 +59,10 @@ def ssh_host(hosts, mode='memory', num_gpus=4, verbose=False):
                                    timeout=10)
         except Exception as e:
             print('Catch exception when ssh {}! Skip! {}'.format(host,e.args))
-            info.append([-1]*4)
+            info.append([-1]*num_gpus)
             if mode == 'all':
-                info2.append([-1]*4)
-                info3.append([-1]*4)
+                info2.append([-1]*num_gpus)
+                info3.append([-1]*num_gpus)
         else:
             if mode != 'all':
                 result_ = result.decode("utf-8")
@@ -50,8 +74,12 @@ def ssh_host(hosts, mode='memory', num_gpus=4, verbose=False):
                 result_ = result.decode("utf-8").strip('\n').split('\n')
                 gpu_memory = list(map(float,result_[0].split(',')))
                 gpu_usage  = list(map(float,result_[1].split(',')))
-                cpu_memory = list(map(float,filter_num(result_[3])))
-                #cpu_swap   = list(map(float,filter_num(result_[4])))
+                try:
+                    cpu_memory = list(map(float,filter_num(result_[3])))
+                except (IndexError, ValueError):
+                    # Handle case where free command output is not as expected
+                    cpu_memory = [-1, -1, -1]
+                
                 if len(gpu_memory) < num_gpus:
                     gpu_memory.extend([-1,]*(num_gpus-len(gpu_memory)))
                 if len(gpu_usage) < num_gpus:
@@ -78,20 +106,43 @@ def get_gpu_health(mem, use, th=[1,15]):
         #print(f'Confused: mem-{mem},use-{use}')
         return 'Error?'
 
-def get_tablerow(host_name,status):
+def get_tablerow(host_name, status, color_map=None):
+    """
+    Create a table row with status and colors
+    
+    Parameters
+    ----------
+    host_name : str
+        Name of the host
+    status : list
+        List of status strings
+    color_map : dict
+        Mapping of status to colors
+        
+    Returns
+    -------
+    list
+        Row data with host name and colored status items
+    """
+    if color_map is None:
+        # Default color map - will be overridden by global color_map2 if available
+        color_map = {'Empty': 'white', 'Error?': 'red', 'Healthy': 'lime', 'Unhealthy': 'yellow'}
+    
     items = []
     for s in status:
         try:
-            color = color_map2[s]
-        except:
+            # Try to use global color_map2 first, then fallback to parameter
+            color = globals().get('color_map2', color_map).get(s, 'white')
+        except (AttributeError, TypeError):
             color = 'white'
-        items.append([s,color])
+        items.append([s, color])
     return [host_name, ] + items
 
 class GPU_logger():
     def __init__(self,host_names,time_interval,time_range, 
                  show_summary=True, show_monitor=True, show_cpu_mem=False,
-                 port=8098, env_name='main', verbose=False):
+                 port=8098, env_name='main', verbose=False, 
+                 script_path=None, home_path=None):
         self.viz = Visdom(port=port)
         self.env = env_name
         self.hosts = host_names
@@ -104,13 +155,18 @@ class GPU_logger():
         self.win = {}
         self.num_gpus = 4
         self.max_length = self.range // self.sleep
-        self.tick_ds = self.max_length//6
+        self.tick_ds = self.max_length//6 if self.max_length > 0 else 1
         self.time_indices = deque()
         self.memory_queue = np.zeros([len(host_names), self.num_gpus, 0])
         self.usages_queue = np.zeros([len(host_names), self.num_gpus, 0])
         self.table_W = 780
         self.table_H = 470
-        self.restore(PWD)
+        
+        # Set paths with fallbacks
+        self.script_path = script_path if script_path else os.path.dirname(os.path.abspath(__file__))
+        self.home_path = home_path if home_path else os.getenv('HOME', '/tmp')
+        
+        self.restore(self.script_path)
 
     def reset(self):
         self.viz.close(win=None, env=self.env)
@@ -147,20 +203,35 @@ class GPU_logger():
                 self.time_indices.popleft()
             self.time_indices.append(time.strftime("%H:%M"))
 
-            if isfile(join(HOME,'.tcshrc')): # hotfix to handle my zsh
-                os.rename(join(HOME,'.tcshrc'), join(HOME,'.tcshrc.bak'))
+            # Safe file operation for tcshrc backup
+            tcshrc_path = join(self.home_path, '.tcshrc')
+            tcshrc_bak_path = join(self.home_path, '.tcshrc.bak')
+            
+            try:
+                if isfile(tcshrc_path): # hotfix to handle my zsh
+                    os.rename(tcshrc_path, tcshrc_bak_path)
+            except (OSError, IOError) as e:
+                if self.verbose:
+                    print(f"Warning: Could not backup .tcshrc file: {e}")
 
             #gpu_memory = ssh_host(self.hosts, mode='memory')
             #gpu_usage  = ssh_host(self.hosts, mode='gpu')
-            gpu_memory, gpu_usage, cpu_memory = ssh_host(self.hosts, mode='all')
+            gpu_memory, gpu_usage, cpu_memory = ssh_host(self.hosts, mode='all', 
+                                                          num_gpus=self.num_gpus, 
+                                                          verbose=self.verbose, 
+                                                          script_path=self.script_path)
 
             if self.verbose:
                 print('gpu memory:', gpu_memory)
                 print('gpu usage:', gpu_usage)
                 print('cpu memory:', cpu_memory)
 
-            if isfile(join(HOME,'.tcshrc.bak')):
-                os.rename(join(HOME,'.tcshrc.bak'), join(HOME,'.tcshrc'))
+            try:
+                if isfile(tcshrc_bak_path):
+                    os.rename(tcshrc_bak_path, tcshrc_path)
+            except (OSError, IOError) as e:
+                if self.verbose:
+                    print(f"Warning: Could not restore .tcshrc file: {e}")
 
             if self.memory_queue.shape[-1] < self.max_length:
                 self.memory_queue = np.append(self.memory_queue, 
@@ -282,15 +353,16 @@ if __name__ == '__main__':
                         show_summary=True,
                         show_monitor=True,
                         show_cpu_mem=True,
-                        env_name=args.env, verbose=False)
+                        env_name=args.env, verbose=False,
+                        script_path=PWD, home_path=HOME)
 
     try:
         logger.record()
     except KeyboardInterrupt:
-        logger.save(PWD)
+        logger.save(logger.script_path)
         logger.reset()
     except Exception as e:
-        logger.save(PWD)
+        logger.save(logger.script_path)
         logger.reset()
         #exc_type, exc_obj, exc_tb = sys.exc_info()
         logger.viz.text(f"GPU monitor crashed at \

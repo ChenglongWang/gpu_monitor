@@ -14,8 +14,7 @@ License: CeCILL (open-source GPL compatible), see source code for details.
 
 __version__ = '0.04'
 __date__    = '2009-07-28'
-__author__  = 'Philippe Lagadec'
-import ast 
+__author__  = 'Philippe Lagadec' 
 
 #--- LICENSE ------------------------------------------------------------------
 
